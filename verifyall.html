@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leak Verifier Prototype</title>
+    <!-- Inter font and Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .status-active {
+            color: #10b981; /* green-500 */
+        }
+        .status-inactive {
+            color: #ef4444; /* red-500 */
+        }
+        .status-manual {
+            color: #f59e0b; /* yellow-500 */
+        }
+        /* Style for the button */
+        .search-button {
+            transition: all 0.2s ease-in-out;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .search-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .search-button:active {
+            transform: translateY(0);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+
+    <div class="bg-white rounded-2xl shadow-xl p-8 max-w-4xl w-full">
+        <h1 class="text-3xl font-bold text-gray-900 mb-6 text-center">Leak Verifier Prototype</h1>
+        
+        <!-- Search and input section -->
+        <div class="flex items-center justify-center space-x-4 mb-8">
+            <button id="searchButton" class="search-button px-6 py-3 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                Verify All Leaks
+            </button>
+        </div>
+
+        <!-- Status and table display -->
+        <div class="bg-gray-50 rounded-xl p-4 mb-6">
+            <p id="statusMessage" class="text-center text-gray-600 italic">Click "Verify All Leaks" to begin. Remember to run your Python backend server first!</p>
+        </div>
+
+        <div class="overflow-x-auto rounded-xl shadow-inner">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-200">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">URL</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Date</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Username</th>
+                        <th scope="col" class="px-6 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsTableBody" class="bg-white divide-y divide-gray-200">
+                    <!-- Results will be dynamically inserted here -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // Get DOM elements
+        const searchButton = document.getElementById('searchButton');
+        const resultsTableBody = document.getElementById('resultsTableBody');
+        const statusMessage = document.getElementById('statusMessage');
+
+        /**
+         * Calls the actual backend API to verify a single credential.
+         * @param {object} credential - The single credential object to verify.
+         * @returns {Promise<string>} - A promise that resolves with the classification status from the backend.
+         */
+        async function verifyWorker(credential) {
+            try {
+                // IMPORTANT: This URL must match the address and port of your running Python backend.
+                const response = await fetch('http://127.0.0.1:5000/verify', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        url: credential.Url,
+                        username: credential.username,
+                        password: credential.Password
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Server error');
+                }
+
+                const result = await response.json();
+                return result.status;
+            } catch (error) {
+                console.error('API call failed:', error);
+                return 'Manual Check'; 
+            }
+        }
+
+        /**
+         * Orchestrates the search, data retrieval, verification, and UI update process.
+         */
+        async function startVerification() {
+            // Clear previous results and show loading message
+            resultsTableBody.innerHTML = '';
+            statusMessage.textContent = `Fetching data from the backend...`;
+
+            // Step 1: Fetch all data from the backend
+            let allLeaks;
+            try {
+                const response = await fetch('http://127.0.0.1:5000/get-leaks', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({}) // Send an empty object since no domain is needed
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Server error');
+                }
+
+                allLeaks = await response.json();
+            } catch (error) {
+                statusMessage.textContent = `Error fetching data: ${error.message}`;
+                return;
+            }
+
+            if (allLeaks.length === 0) {
+                statusMessage.textContent = `No leaks found in the CSV file.`;
+                return;
+            }
+
+            statusMessage.textContent = `Found ${allLeaks.length} potential leaks. Verifying...`;
+
+            // Step 2: Process each credential
+            for (const leak of allLeaks) {
+                const newRow = resultsTableBody.insertRow();
+                newRow.className = 'hover:bg-gray-100 transition-colors duration-200';
+                
+                newRow.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${leak.Url}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${leak.Date}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${leak.username}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-medium">
+                        <span id="status-${leak.username}">Verifying...</span>
+                    </td>
+                `;
+
+                const statusSpan = document.getElementById(`status-${leak.username}`);
+
+                try {
+                    const status = await verifyWorker(leak);
+                    
+                    statusSpan.textContent = status;
+                    if (status === 'Active') {
+                        statusSpan.className = 'status-active';
+                    } else if (status === 'Inactive') {
+                        statusSpan.className = 'status-inactive';
+                    } else {
+                        statusSpan.className = 'status-manual';
+                    }
+                } catch (error) {
+                    statusSpan.textContent = 'Error';
+                    statusSpan.className = 'text-red-600';
+                }
+            }
+
+            statusMessage.textContent = 'Verification complete.';
+        }
+
+        // --- EVENT LISTENERS ---
+        searchButton.addEventListener('click', startVerification);
+    </script>
+</body>
+</html>
